@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# SERVICE — redis
+# =============================================================================
+# A Service gives pods a stable network address. Pods are ephemeral — they get
+# new IP addresses when restarted. A Service provides a fixed DNS name and IP
+# that other pods use to reach Redis regardless of pod restarts.
+#
+# HOW ROUTING WORKS:
+#   Service uses selector.app: redis to find matching pods.
+#   kube-proxy maintains iptables/ipvs rules to load-balance across those pods.
+#   DNS: redis.redis.svc.cluster.local resolves to the Service ClusterIP.
+#        Format: <service-name>.<namespace>.svc.cluster.local
+#   Short form (within the same namespace): redis:6379
+#
+# SERVICE TYPES:
+#   ClusterIP     (default) — internal to cluster only. Used here.
+#   NodePort      — exposes on every node's IP at a static port (30000-32767).
+#   LoadBalancer  — provisions a cloud LB (GCP, AWS). Not available in kind.
+#   ExternalName  — DNS alias to an external service.
+#
+# FOR THIS DEMO: ClusterIP is correct. Redis is a backend service — only pods
+# inside the cluster should reach it. You can test it by exec-ing into a pod.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: redis
+  labels:
+    app: redis
+    managed-by: argocd
+spec:
+  type: ClusterIP
+
+  selector:
+    app: redis
+  # selector: routes traffic to pods with this label.
+  # Must match Deployment spec.template.metadata.labels.
+  # When a pod restarts and gets a new IP, Service automatically updates its
+  # endpoint list — the DNS name stays the same.
+
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+    # port: 6379       — the port clients connect to on the Service.
+    # targetPort: redis — the named port on the pod (containerPort name in deployment.yaml).
+    #                     Using a name instead of a number means you can change
+    #                     the pod port without updating the Service.
+    # protocol: TCP     — Redis uses TCP.

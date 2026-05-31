@@ -1,0 +1,130 @@
+---
+# =============================================================================
+# DEPLOYMENT — redis
+# =============================================================================
+# A Deployment manages a set of identical Pods and ensures the desired number
+# are always running. If a pod crashes, the Deployment controller creates a
+# new one. If you scale up, it creates more.
+#
+# DEPLOYMENT vs POD:
+#   Never create a naked Pod in production — if the node dies, the pod is gone.
+#   A Deployment has a ReplicaSet controller watching it — it self-heals.
+#
+# KEY SECTIONS:
+#   spec.replicas        How many pod copies to run.
+#   spec.selector        How the Deployment finds "its" pods (must match template labels).
+#   spec.template        The pod blueprint — every pod looks like this.
+#   resources            CPU/memory requests (scheduled on) and limits (enforced).
+#   volumeMounts         Where inside the container to mount the config file.
+#   volumes              What to mount — here: the ConfigMap as a file.
+#
+# ARGOCD SELF-HEALING DEMO:
+#   After deploying, manually scale to 0:
+#     kubectl scale deployment redis --replicas=0 -n redis
+#   Watch ArgoCD detect OutOfSync and revert to replicas=1 within ~3 minutes.
+#   Or force immediate sync: argocd app sync redis
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: redis
+  labels:
+    app: redis
+    managed-by: argocd
+spec:
+  replicas: 1
+  # replicas: 1 is sufficient for a learning demo. In production: 3+ for HA,
+  # or use Redis Sentinel / Redis Cluster for true high availability.
+
+  selector:
+    matchLabels:
+      app: redis
+  # selector.matchLabels must match spec.template.metadata.labels.
+  # The Deployment uses this to know which pods it owns.
+  # Mismatch here = Deployment creates pods it can never find = broken.
+
+  template:
+    # Everything under template: is the Pod specification.
+    # The Deployment stamps out pods using this blueprint.
+    metadata:
+      labels:
+        app: redis
+        # Must match selector.matchLabels above.
+        # Also used by the Service to route traffic to these pods.
+
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # redis:7-alpine — official Redis 7 on Alpine Linux.
+          # Alpine = minimal base image (~5MB) vs full Debian (~100MB).
+          # 'alpine' tag works on arm64 (M2 Mac) and amd64 (Linux servers).
+          # In production: pin to a specific digest e.g. redis:7.2.4-alpine
+          # to prevent surprise upgrades when 'alpine' tag moves.
+
+          command: ["redis-server", "/etc/redis/redis.conf"]
+          # Override the default entrypoint to pass our config file.
+          # Without this, Redis starts with defaults (no maxmemory, persistence on).
+
+          ports:
+            - containerPort: 6379
+              name: redis
+          # Redis default port. 'name' makes it referenceable from the Service.
+          # containerPort is documentation — it doesn't open a firewall.
+          # The Service (service.yaml) is what actually routes traffic.
+
+          resources:
+            requests:
+              # requests: minimum guaranteed resources. Used by the scheduler
+              # to decide which node can run this pod.
+              cpu: "100m"      # 100 millicores = 0.1 CPU core
+              memory: "128Mi"  # 128 mebibytes
+            limits:
+              # limits: hard ceiling enforced by the kernel.
+              # CPU limit: pod is throttled (not killed) if exceeded.
+              # Memory limit: pod is OOMKilled if exceeded. Set > maxmemory in redis.conf.
+              cpu: "250m"
+              memory: "256Mi"
+          # requests < limits intentionally — allows bursting.
+          # maxmemory in redis.conf (128mb) < memory limit (256Mi) — Redis evicts
+          # keys before the kernel kills the pod. This is the correct relationship.
+
+          volumeMounts:
+            - name: redis-config-volume
+              mountPath: /etc/redis/
+          # Mounts the volume named 'redis-config-volume' at /etc/redis/ inside
+          # the container. The ConfigMap key 'redis.conf' becomes the file
+          # /etc/redis/redis.conf — exactly the path command: references above.
+
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          # livenessProbe: if this fails, Kubernetes restarts the container.
+          # 'redis-cli ping' returns PONG if Redis is alive.
+          # initialDelaySeconds: wait 10s before first check (give Redis time to start).
+          # periodSeconds: check every 10s.
+          # Without a probe, Kubernetes assumes the container is healthy as long
+          # as the process is running — even if Redis is deadlocked.
+
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # readinessProbe: if this fails, the pod is removed from Service endpoints.
+          # Traffic stops routing to it until it passes again.
+          # readiness ≠ liveness:
+          #   liveness  = "is the process alive?" — restart if no
+          #   readiness = "is the process ready to serve traffic?" — remove from LB if no
+
+      volumes:
+        - name: redis-config-volume
+          configMap:
+            name: redis-config
+        # volumes: declares what storage to make available to this pod.
+        # configMap.name: must match the ConfigMap metadata.name in configmap.yaml.
+        # The ConfigMap is projected as files — each key becomes a filename.
+        # Our key is 'redis.conf' → file /etc/redis/redis.conf (via mountPath above).

@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Secrets — never commit these
+*.pem
+*.key
+kubeconfig
+kubeconfig-*
+*-secret.yaml
+*-secrets.yaml
+
+# Temp
+*.log
+*.tmp

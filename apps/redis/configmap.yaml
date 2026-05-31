@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# CONFIGMAP — redis-config
+# =============================================================================
+# A ConfigMap stores non-secret configuration as key-value pairs or files.
+# Pods mount it as a file or consume it as environment variables.
+#
+# Use ConfigMap for: config files, feature flags, connection strings (non-secret).
+# Use Secret for:    passwords, API keys, TLS certificates.
+#
+# HERE: we store redis.conf — the Redis server configuration file.
+# The Deployment mounts this ConfigMap as a file at /etc/redis/redis.conf
+# and passes it to the redis-server process as an argument.
+#
+# GITOPS IMPLICATION:
+#   If you change maxmemory here and push to Git, ArgoCD detects the ConfigMap
+#   diff and syncs it. The Deployment does NOT automatically restart — you need
+#   to either:
+#     a) Rolling restart: kubectl rollout restart deployment/redis -n redis
+#     b) Use a Deployment annotation checksum trick (covered in real setups)
+#   For this learning exercise, restart manually after config changes.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: redis
+  labels:
+    app: redis
+    managed-by: argocd
+data:
+  # 'redis.conf' is the key — it becomes the filename when mounted as a volume.
+  redis.conf: |
+    # Maximum memory Redis can use. When reached, Redis evicts keys per policy.
+    maxmemory 128mb
+
+    # Eviction policy when maxmemory is hit.
+    # allkeys-lru: evict the least-recently-used key from ALL keys.
+    # Good default for a cache. Other options: volatile-lru, allkeys-random, noeviction.
+    maxmemory-policy allkeys-lru
+
+    # Disable persistence for this demo — Redis is used as a pure cache here.
+    # In production you'd enable RDB snapshots or AOF for durability.
+    save ""
+
+    # Bind to all interfaces inside the pod (0.0.0.0).
+    # The Service controls external access — this is pod-internal only.
+    bind 0.0.0.0
+
+    # Protected mode requires a password if binding to non-localhost.
+    # Disabled here for simplicity — in production, always use requirepass.
+    protected-mode no

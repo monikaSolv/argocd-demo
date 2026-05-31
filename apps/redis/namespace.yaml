@@ -1,0 +1,26 @@
+---
+# =============================================================================
+# NAMESPACE — redis
+# =============================================================================
+# A Kubernetes Namespace is an isolation boundary inside the cluster.
+# All Redis resources (Deployment, Service, ConfigMap) live in this namespace.
+#
+# WHY A DEDICATED NAMESPACE?
+#   - RBAC: you can grant access to 'redis' namespace without cluster-wide access.
+#   - Resource quotas: limit how much CPU/memory the redis namespace can use.
+#   - Cleanup: delete namespace → deletes everything in it atomically.
+#   - Clear ownership: 'redis' namespace = redis team's territory.
+#
+# ArgoCD can create this namespace automatically via syncOptions.
+# We define it explicitly here so ArgoCD tracks it — if it's removed from Git,
+# ArgoCD (with prune: true) will delete it from the cluster too.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redis
+  labels:
+    # Labels are key-value pairs — used for selecting, filtering, and tooling.
+    # 'managed-by: argocd' is a convention to mark ArgoCD-owned resources.
+    managed-by: argocd
+    app: redis

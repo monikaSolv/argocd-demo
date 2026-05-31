@@ -1,0 +1,135 @@
+---
+# =============================================================================
+# ARGOCD APPLICATION — redis
+# =============================================================================
+# THIS IS THE MOST IMPORTANT FILE IN ARGOCD.
+#
+# An Application is an ArgoCD CRD (Custom Resource Definition).
+# It tells ArgoCD three things:
+#   WHERE  to get the desired state from (source: Git repo + path)
+#   WHERE  to deploy it to (destination: cluster + namespace)
+#   HOW    to behave on changes (syncPolicy: auto/manual, prune, selfHeal)
+#
+# ONE APPLICATION = ONE SERVICE.
+# In production you'd have: redis-app, postgres-app, api-app, etc.
+# Each is independent — you can sync/roll back/delete them separately.
+#
+# THE APP-OF-APPS PATTERN (advanced — for reference):
+#   You can have one ArgoCD Application whose Git path contains OTHER
+#   Application YAMLs. ArgoCD applies them, creating more Applications.
+#   This is how teams manage 50+ services: one root app bootstraps all others.
+#   You will get here — this file is the first step.
+#
+# TODO: Replace <YOUR_GITHUB_USERNAME> and <YOUR_REPO_NAME> below.
+#       Push this repo to GitHub first, then apply this file.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis
+  namespace: argocd
+  # Application objects always live in the 'argocd' namespace — not in the
+  # target namespace. ArgoCD manages them centrally.
+
+  labels:
+    app: redis
+
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  # Finalizer: when you delete this Application, ArgoCD deletes all the
+  # Kubernetes resources it created (Deployment, Service, ConfigMap, Namespace).
+  # Without this finalizer: deleting the Application leaves orphaned resources.
+  # With it: clean deletion — like terraform destroy for this app.
+
+spec:
+  project: default
+  # project: ArgoCD AppProject — controls which repos, clusters, namespaces
+  # are allowed. 'default' permits everything. In production, create per-team
+  # projects with RBAC: "team-redis can only deploy to redis namespace."
+
+  # ---------------------------------------------------------------------------
+  # SOURCE — where ArgoCD reads the desired state from
+  # ---------------------------------------------------------------------------
+  source:
+    repoURL: https://github.com/monikaSolv/argocd-demo.git
+    # TODO: replace with your actual GitHub repo URL.
+    # ArgoCD clones this repo (argocd-repo-server does the cloning).
+    # For private repos: add credentials via:
+    #   argocd repo add <url> --username <user> --password <token>
+    # For this learning demo: make the repo public, no credentials needed.
+
+    targetRevision: HEAD
+    # targetRevision: which Git ref to track.
+    # HEAD      = latest commit on the default branch. Good for learning.
+    # main      = specific branch. Good for production.
+    # v1.2.3    = tag. Best for production — explicit, immutable.
+    # a1b2c3d4  = specific commit SHA. Maximum stability.
+
+    path: apps/redis
+    # path: directory inside the repo containing the manifests.
+    # ArgoCD applies all YAML files found in this directory.
+    # Subdirectories are NOT included unless you set recurse: true.
+    # File order doesn't matter — ArgoCD applies in dependency order
+    # (Namespace before Deployment, etc.).
+
+  # ---------------------------------------------------------------------------
+  # DESTINATION — where ArgoCD deploys to
+  # ---------------------------------------------------------------------------
+  destination:
+    server: https://kubernetes.default.svc
+    # server: which Kubernetes cluster to deploy to.
+    # 'https://kubernetes.default.svc' = the cluster ArgoCD itself runs in.
+    # For multi-cluster: register remote clusters with 'argocd cluster add'.
+
+    namespace: redis
+    # namespace: where to create resources that don't specify their own.
+    # Our manifests all have 'namespace: redis' explicitly — this is a fallback.
+
+  # ---------------------------------------------------------------------------
+  # SYNC POLICY — how ArgoCD behaves when it detects a diff
+  # ---------------------------------------------------------------------------
+  syncPolicy:
+    automated:
+      prune: true
+      # prune: true — if a resource is removed from Git, ArgoCD deletes it
+      # from the cluster too.
+      # prune: false (default) — removed resources stay in cluster (orphaned).
+      # Start with false when learning, true in production for clean GitOps.
+
+      selfHeal: true
+      # selfHeal: true — if someone manually changes the cluster (kubectl edit,
+      # kubectl scale), ArgoCD reverts it to match Git within ~3 minutes.
+      # This is the core GitOps guarantee: Git is always the truth.
+      # Disable if your team needs manual override capability (not recommended).
+
+    syncOptions:
+      - CreateNamespace=true
+      # CreateNamespace=true — ArgoCD creates the 'redis' namespace if it
+      # doesn't exist before applying resources. Without this, applying
+      # Deployment before Namespace exists would fail.
+      # We also define namespace.yaml explicitly so ArgoCD tracks it in Git.
+
+      - ServerSideApply=true
+      # ServerSideApply=true — uses server-side apply (kubectl apply --server-side).
+      # Better conflict detection when multiple tools manage the same resource.
+      # Recommended for production. Prevents "last writer wins" issues.
+
+  # ---------------------------------------------------------------------------
+  # RETRY — automatic retry on sync failure
+  # ---------------------------------------------------------------------------
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      # limit: 3 — retry failed syncs up to 3 times before giving up.
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 30s
+      # Exponential backoff: 5s, 10s, 20s between retries.
+      # Prevents thundering-herd if the cluster is temporarily unavailable.
